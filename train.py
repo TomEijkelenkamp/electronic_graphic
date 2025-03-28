@@ -51,62 +51,83 @@ class DrawMLP(nn.Module):
         x = torch.sigmoid(self.fc3(x))  # Normalize output (0-1)
 
         return x
+    
+def draw_line(drawning_batch, predicted_coords):
+    batch_size = predicted_coords.size(0)
+    
+    # Loop over each image in the batch
+    for i in range(batch_size):
+        # Get the predicted coordinates for this image
+        x1, y1, x2, y2 = predicted_coords[i]
 
-def draw_line(image_tensor, coords):
-    x1, y1, x2, y2 = coords
+        # Convert the coordinates to integers for indexing
+        # Check the shape of drawning_batch and adapt the indexing accordingly
+        if len(drawning_batch.shape) == 4:  # If batch_size, channels, height, width
+            height, width = drawning_batch.shape[2], drawning_batch.shape[3]
+            image_tensor = drawning_batch[i, 0]  # Get the single channel image
+        elif len(drawning_batch.shape) == 3:  # If batch_size, height, width
+            height, width = drawning_batch.shape[1], drawning_batch.shape[2]
+            image_tensor = drawning_batch[i]  # Get the image directly (no channel dimension)
+        else:
+            raise ValueError("Unexpected shape for drawning_batch.")
 
-    # Convert the coordinates to integers for indexing
-    x1, y1, x2, y2 = int(x1 * image_tensor.shape[2]), int(y1 * image_tensor.shape[1]), \
-                       int(x2 * image_tensor.shape[2]), int(y2 * image_tensor.shape[1])
+        # Scale the predicted coordinates to match image dimensions
+        x1, y1, x2, y2 = int(x1 * width), int(y1 * height), \
+                           int(x2 * width), int(y2 * height)
 
-    dx = abs(x2 - x1)
-    dy = abs(y2 - y1)
-    sx = 1 if x1 < x2 else -1
-    sy = 1 if y1 < y2 else -1
-    err = dx - dy
+        dx = abs(x2 - x1)
+        dy = abs(y2 - y1)
+        sx = 1 if x1 < x2 else -1
+        sy = 1 if y1 < y2 else -1
+        err = dx - dy
 
-    while True:
-        if 0 <= x1 < image_tensor.shape[2] and 0 <= y1 < image_tensor.shape[1]:
-            image_tensor[0, y1, x1] = 0  # Draw black pixel (since it's a canvas, we assume 0 is black)
-        
-        if x1 == x2 and y1 == y2:
-            break
-        
-        e2 = err * 2
-        if e2 > -dy:
-            err -= dy
-            x1 += sx
-        if e2 < dx:
-            err += dx
-            y1 += sy
+        while True:
+            if 0 <= x1 < width and 0 <= y1 < height:
+                # Draw black pixel (since it's a canvas, we assume 0 is black)
+                image_tensor[y1, x1] = 0  # Update the pixel to black
 
-    return image_tensor
+            if x1 == x2 and y1 == y2:
+                break
+
+            e2 = err * 2
+            if e2 > -dy:
+                err -= dy
+                x1 += sx
+            if e2 < dx:
+                err += dx
+                y1 += sy
+
+    return drawning_batch
 
 # Training loop with fixed denormalization and model outputs
-def train_network(model, optimizer, criterion, num_epochs, dataloader, max_actions_per_image, save_interval=500):
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = model.to(device)  # Move model to GPU
-
+def train_network(device, model, optimizer, criterion, num_epochs, dataloader, max_actions_per_image, save_interval=500):
     for epoch in range(num_epochs):
+        print(f"Epoch {epoch}/{num_epochs}")
         for batch_idx, batch in enumerate(dataloader):
             # Move batch to the appropriate device
             example_batch = batch.to(device)
+            print(f"Batch {batch_idx}/{len(dataloader)}: {example_batch.shape}")
 
             # Initialize drawn image (white canvas) for the batch, requires gradients
             drawning_batch = torch.ones_like(batch, dtype=torch.float32, requires_grad=True).to(device)
+            print(f"Drawning batch initialized: {drawning_batch.shape}")
 
             for action in range(max_actions_per_image):
+                print(f"Action {action}/{max_actions_per_image}")
                 # Let the model predict the coordinates
                 predicted_coords = model(example_batch, drawning_batch)
+                print(f"Predicted coordinates: {predicted_coords.shape}")
 
                 # Draw the line on the image canvas
                 draw_line(drawning_batch, predicted_coords)
+                print(f"Drawn image shape: {drawning_batch.shape}")
 
                 # Compute loss
                 loss = criterion(example_batch, drawning_batch)
+                print(f"Loss: {loss.item()}")
 
                 optimizer.zero_grad()
-                loss.backward()  # Backpropagate gradients
+                loss.backward(retain_graph=True)  # Retain the graph for subsequent backward passes
                 optimizer.step()  # Update weights
 
             if epoch % 10 == 0:
@@ -133,8 +154,6 @@ drawings_save_folder = './drawings'  # Folder to save drawn images
 if not os.path.exists(drawings_save_folder):
     os.makedirs(drawings_save_folder)
 
-
-
 # Initialize parameters
 image_width, image_height = 224, 224
 hidden_size = 128
@@ -153,6 +172,7 @@ print(f"Using device: {device}")
 
 # Move model to GPU
 model = DrawMLP(image_width, image_height, hidden_size).to(device)
+print("Model initialized and moved to device.")
 
 # Ensure model parameters require gradients
 for param in model.parameters():
@@ -163,4 +183,4 @@ optimizer = optim.Adam(model.parameters(), lr=0.001)
 criterion = nn.MSELoss()
 
 # Call the train function with DataLoader
-train_network(model, optimizer, criterion, num_epochs=5000, dataloader=dataloader, max_actions_per_image=20)
+train_network(device, model, optimizer, criterion, num_epochs=5000, dataloader=dataloader, max_actions_per_image=20)
