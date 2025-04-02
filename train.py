@@ -6,6 +6,8 @@ import matplotlib.pyplot as plt
 import os
 from PIL import Image
 from torch.utils.data import Dataset, DataLoader
+import torch.nn.functional as F
+import torchvision.transforms as transforms
 
 class ImageDataset(Dataset):
     def __init__(self, dataset_path, image_width, image_height):
@@ -20,118 +22,184 @@ class ImageDataset(Dataset):
     def __getitem__(self, idx):
         image_path = os.path.join(self.dataset_path, self.image_files[idx])
         target_image = self.load_image(image_path)
-        target_tensor = torch.tensor(target_image, dtype=torch.float32).view(1, -1)  # Flatten the image
-        return target_tensor
+        return target_image
+
 
     def load_image(self, image_path):
-        img = Image.open(image_path).convert('L')  # Convert to grayscale
-        img = img.resize((self.image_width, self.image_height))  # Ensure correct size
-        img = np.array(img) / 255.0  # Normalize to [0,1]
+        transform = transforms.Compose([
+            transforms.Grayscale(num_output_channels=1),  # Ensure grayscale
+            transforms.Resize((self.image_width, self.image_height)),  # Resize
+            transforms.ToTensor()  # Convert to tensor, auto normalizes to [0,1]
+        ])
+        img = transform(Image.open(image_path))
         return img
 
+    # def load_image(self, image_path):
+    #     img = Image.open(image_path).convert('L')  # Convert to grayscale
+    #     img = img.resize((self.image_width, self.image_height))  # Ensure correct size
+    #     img = np.array(img) / 255.0  # Normalize to [0,1]
+    #     img = torch.tensor(img).unsqueeze(0)  # Add channel dimension: [1, H, W]
+    #     return img
+    
 class DrawMLP(nn.Module):
     def __init__(self, image_width, image_height, hidden_size):
         super(DrawMLP, self).__init__()
-        # Input size: 2 * image_width * image_height (for example and drawing)
-        self.fc1 = nn.Linear(2 * image_width * image_height, hidden_size)
-        self.fc2 = nn.Linear(hidden_size, hidden_size)
-        self.fc3 = nn.Linear(hidden_size, 4)  # x1, y1, x2, y2
+
+        # Convolutional layers
+        self.conv1 = nn.Conv2d(2, 16, kernel_size=5, stride=1, padding=2)
+        self.conv2 = nn.Conv2d(16, 32, kernel_size=5, stride=1, padding=2)
+        self.conv3 = nn.Conv2d(32, 64, kernel_size=5, stride=1, padding=2)
+        self.conv4 = nn.Conv2d(64, 128, kernel_size=5, stride=1, padding=2)
+
+        # Batch Normalization
+        self.bn1 = nn.BatchNorm2d(16)
+        self.bn2 = nn.BatchNorm2d(32)
+        self.bn3 = nn.BatchNorm2d(64)
+        self.bn4 = nn.BatchNorm2d(128)
+
+        # Pooling
+        self.pool = nn.MaxPool2d(2, 2)
+
+        # Compute flattened size dynamically
+        sample_input = torch.zeros(1, 2, image_width, image_height)
+        with torch.no_grad():
+            flattened_size = self._compute_feature_map_size(sample_input)
+
+        # Fully connected layers
+        self.fc1 = nn.Linear(flattened_size, hidden_size)
+        self.fc2 = nn.Linear(hidden_size, 32)
+        self.fc3 = nn.Linear(32, 8)  # Output size is 8 (4 points with x, y coordinates)
+
+    def _compute_feature_map_size(self, x):
+        x = self.pool(F.silu(self.bn1(self.conv1(x))))
+        x = self.pool(F.silu(self.bn2(self.conv2(x))))
+        x = self.pool(F.silu(self.bn3(self.conv3(x))))
+        x = self.pool(F.silu(self.bn4(self.conv4(x))))
+        return x.numel()
 
     def forward(self, example_batch, drawning_batch):
-        # Flatten example_batch and drawning_batch
-        example_batch_flat = example_batch.view(example_batch.size(0), -1)  # Flatten to (batch_size, features)
-        drawning_batch_flat = drawning_batch.view(drawning_batch.size(0), -1)  # Flatten to (batch_size, features)
-        
-        # Concatenate the example and drawn image batches along the feature dimension
-        x = torch.cat((example_batch_flat, drawning_batch_flat), dim=1)
-        
-        # Pass through the network layers
-        x = torch.relu(self.fc1(x))
-        x = torch.relu(self.fc2(x))
-        x = torch.sigmoid(self.fc3(x))  # Normalize output (0-1)
+        x = torch.cat((example_batch, drawning_batch), dim=1)
+
+        x = self.pool(F.silu(self.bn1(self.conv1(x))))
+        x = self.pool(F.silu(self.bn2(self.conv2(x))))
+        x = self.pool(F.silu(self.bn3(self.conv3(x))))
+        x = self.pool(F.silu(self.bn4(self.conv4(x))))
+
+        x = x.view(x.size(0), -1)
+
+        x = F.silu(self.fc1(x))
+        x = F.silu(self.fc2(x))
+        x = torch.sigmoid(self.fc3(x))  # Normalize output
 
         return x
+
+def cubic_bezier(t, p0, p1, p2, p3):
+    """Computes a cubic Bézier curve for parameter t (batched)."""
+    return ((1 - t) ** 3) * p0 + 3 * ((1 - t) ** 2) * t * p1 + 3 * (1 - t) * (t ** 2) * p2 + (t ** 3) * p3
+
+def estimate_curve_length(control_points, num_samples=16):
+    """Estimates the Bézier curve length using piecewise linear approximation."""
+    t_values = torch.linspace(0, 1, num_samples, device=control_points.device).view(1, -1, 1)
+    curve_points = cubic_bezier(t_values, control_points[:, 0:1], control_points[:, 1:2], 
+                                control_points[:, 2:3], control_points[:, 3:4])
     
-def draw_line(drawning_batch, predicted_coords):
-    batch_size = predicted_coords.size(0)
+    segment_lengths = torch.norm(curve_points[:, 1:] - curve_points[:, :-1], dim=-1)  # Distance between points
+    return segment_lengths.sum(dim=1)  # Total curve length per batch item
+
+def draw_batch(example_batch, drawing_batch, control_points):
+    """
+    Draws cubic Bézier curves on a batch of images using adaptive sampling.
+    """
+    device = drawing_batch.device
+    batch_size, _, height, width = drawing_batch.shape
+
+    with torch.no_grad():  # Exclude Bézier rendering from autograd
+        # Rescale control points to [0, width-1] and [0, height-1]
+        control_points[:, :, 0] *= (width - 1)
+        control_points[:, :, 1] *= (height - 1)
+
+        # Estimate curve lengths and determine adaptive num_points
+        num_points = estimate_curve_length(control_points).long()
+        max_num_points = num_points.max().item()
+        
+        # Generate t values with a valid mask
+        steps_range = torch.arange(max_num_points, device=device).unsqueeze(0).expand(batch_size, -1)
+        valid_mask = steps_range < num_points.unsqueeze(1)  # Per batch item
+        
+        t_values = steps_range / (num_points.unsqueeze(1) - 1).clamp(min=1)
+        t_values[~valid_mask] = 0  # Avoid invalid values
+
+        # Compute Bézier curve points
+        curve_points = cubic_bezier(t_values.unsqueeze(-1), control_points[:, 0:1],
+                                    control_points[:, 1:2], control_points[:, 2:3],
+                                    control_points[:, 3:4])
+        
+        # Convert to integer coordinates
+        int_points = curve_points.floor().long()
+        frac = curve_points - int_points.float()
+        x0, y0 = int_points[..., 0], int_points[..., 1]
+        x1, y1 = x0 + 1, y0 + 1
+
+        # Ensure coordinates are within bounds
+        valid_x0 = (0 <= x0) & (x0 < width) & valid_mask
+        valid_y0 = (0 <= y0) & (y0 < height) & valid_mask
+        valid_x1 = (0 <= x1) & (x1 < width) & valid_mask
+        valid_y1 = (0 <= y1) & (y1 < height) & valid_mask
+
+        # Bilinear interpolation weights
+        w00 = (1 - frac[..., 0]) * (1 - frac[..., 1])
+        w01 = (1 - frac[..., 0]) * frac[..., 1]
+        w10 = frac[..., 0] * (1 - frac[..., 1])
+        w11 = frac[..., 0] * frac[..., 1]
+        
+        total_change = 0
+        total_error = 0
+
+        def update_pixel(x, y, w, valid):
+            nonlocal total_change, total_error
+            if valid:
+                change = torch.clamp(drawing_batch[:, 0, y, x] + w, 0, 1) - drawing_batch[:, 0, y, x]
+                drawing_batch[:, 0, y, x] += change
+                total_change += change.sum()
+                total_error += torch.abs(example_batch[:, 0, y, x] - drawing_batch[:, 0, y, x]).sum()
+
+        # Apply updates
+        update_pixel(x0, y0, w00, valid_x0 & valid_y0)
+        update_pixel(x0, y1, w10, valid_x0 & valid_y1)
+        update_pixel(x1, y0, w01, valid_x1 & valid_y0)
+        update_pixel(x1, y1, w11, valid_x1 & valid_y1)
     
-    # Loop over each image in the batch
-    for i in range(batch_size):
-        # Get the predicted coordinates for this image
-        x1, y1, x2, y2 = predicted_coords[i]
+    return drawing_batch, total_change, total_error
 
-        # Convert the coordinates to integers for indexing
-        # Check the shape of drawning_batch and adapt the indexing accordingly
-        if len(drawning_batch.shape) == 4:  # If batch_size, channels, height, width
-            height, width = drawning_batch.shape[2], drawning_batch.shape[3]
-            image_tensor = drawning_batch[i, 0]  # Get the single channel image
-        elif len(drawning_batch.shape) == 3:  # If batch_size, height, width
-            height, width = drawning_batch.shape[1], drawning_batch.shape[2]
-            image_tensor = drawning_batch[i]  # Get the image directly (no channel dimension)
-        else:
-            raise ValueError("Unexpected shape for drawning_batch.")
-
-        # Scale the predicted coordinates to match image dimensions
-        x1, y1, x2, y2 = int(x1 * width), int(y1 * height), \
-                           int(x2 * width), int(y2 * height)
-
-        dx = abs(x2 - x1)
-        dy = abs(y2 - y1)
-        sx = 1 if x1 < x2 else -1
-        sy = 1 if y1 < y2 else -1
-        err = dx - dy
-
-        while True:
-            if 0 <= x1 < width and 0 <= y1 < height:
-                # Draw black pixel (since it's a canvas, we assume 0 is black)
-                image_tensor[y1, x1] = 0  # Update the pixel to black
-
-            if x1 == x2 and y1 == y2:
-                break
-
-            e2 = err * 2
-            if e2 > -dy:
-                err -= dy
-                x1 += sx
-            if e2 < dx:
-                err += dx
-                y1 += sy
-
-    return drawning_batch
-
-# Training loop with fixed denormalization and model outputs
-def train_network(device, model, optimizer, criterion, num_epochs, dataloader, max_actions_per_image, save_interval=500):
+def train_network(device, model, optimizer, num_epochs, dataloader, max_actions_per_image, save_interval=10):
     for epoch in range(num_epochs):
-        print(f"Epoch {epoch}/{num_epochs}")
         for batch_idx, batch in enumerate(dataloader):
             # Move batch to the appropriate device
             example_batch = batch.to(device)
-            print(f"Batch {batch_idx}/{len(dataloader)}: {example_batch.shape}")
 
             # Initialize drawn image (white canvas) for the batch, requires gradients
             drawning_batch = torch.ones_like(batch, dtype=torch.float32, requires_grad=True).to(device)
-            print(f"Drawning batch initialized: {drawning_batch.shape}")
+
+            total_loss = 0
 
             for action in range(max_actions_per_image):
-                print(f"Action {action}/{max_actions_per_image}")
                 # Let the model predict the coordinates
                 predicted_coords = model(example_batch, drawning_batch)
-                print(f"Predicted coordinates: {predicted_coords.shape}")
 
                 # Draw the line on the image canvas
-                draw_line(drawning_batch, predicted_coords)
-                print(f"Drawn image shape: {drawning_batch.shape}")
+                drawning_batch, total_change, total_error = draw_batch(example_batch, drawning_batch, predicted_coords.view(-1, 4, 2))
 
-                # Compute loss
-                loss = criterion(example_batch, drawning_batch)
-                print(f"Loss: {loss.item()}")
+                # Compute loss only on the drawn pixels using the simplified loss
+                loss = total_error / total_change if total_change > 0 else torch.tensor(0.0, device=device)
 
                 optimizer.zero_grad()
-                loss.backward(retain_graph=True)  # Retain the graph for subsequent backward passes
+                loss.backward()  # Retain graph for further backward passes
                 optimizer.step()  # Update weights
 
-            if epoch % 10 == 0:
-                print(f"Epoch [{epoch}/{num_epochs}], Loss: {loss.item():.4f}, Batch {batch_idx}/{len(dataloader)}")
+                total_loss += loss
+
+            if epoch % 1 == 0:
+                print(f"Epoch [{epoch}/{num_epochs}], Loss: {total_loss:.4f}, Batch {batch_idx}/{len(dataloader)}")
 
         # Save the model every `save_interval` epochs
         if epoch % save_interval == 0 or epoch == num_epochs - 1:
@@ -140,9 +208,12 @@ def train_network(device, model, optimizer, criterion, num_epochs, dataloader, m
             print(f"Model saved: {model_path}")
 
             # Save drawn images for all images in the batch (without showing them)
+            print(f"Shape of example_batch: {example_batch.shape}")
             for i in range(example_batch.size(0)):  # Loop through each image in the batch
                 drawn_image_path = os.path.join(drawings_save_folder, f"drawn_image_epoch_{epoch}_batch_{batch_idx}_image_{i}.png")
-                plt.imsave(drawn_image_path, drawning_batch[i].cpu().numpy(), cmap='gray')
+                img = drawning_batch[i].detach().cpu().numpy()
+                print(f"Image shape: {img.shape}")
+                plt.imsave(drawn_image_path, drawning_batch[i].detach().cpu().squeeze(0).numpy(), cmap='gray', format='png')
                 print(f"Drawn image saved: {drawn_image_path}")
 
 # Make sure you specify a folder where you want to save the models
@@ -180,7 +251,6 @@ for param in model.parameters():
 
 # Optimizer and loss function
 optimizer = optim.Adam(model.parameters(), lr=0.001)
-criterion = nn.MSELoss()
 
 # Call the train function with DataLoader
-train_network(device, model, optimizer, criterion, num_epochs=5000, dataloader=dataloader, max_actions_per_image=20)
+train_network(device, model, optimizer, num_epochs=5000, dataloader=dataloader, max_actions_per_image=100, save_interval=4)
