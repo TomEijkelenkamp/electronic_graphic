@@ -1,4 +1,6 @@
 design/mindspace.txt
-data\
-test_images
-test_images_curve
+data/
+test_images/
+test_images_curve/
+generated_images/
+test_images_simple/
