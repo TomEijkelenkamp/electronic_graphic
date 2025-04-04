@@ -21,7 +21,7 @@ class DrawMLP(nn.Module):
         self.num_points = num_points  # Number of Bézier control points
 
         # Convolutional layers
-        self.conv1 = nn.Conv2d(2, 16, kernel_size=5, stride=1, padding=2)
+        self.conv1 = nn.Conv2d(6, 16, kernel_size=5, stride=1, padding=2)
         self.conv2 = nn.Conv2d(16, 32, kernel_size=5, stride=1, padding=2)
         self.conv3 = nn.Conv2d(32, 64, kernel_size=5, stride=1, padding=2)
         self.conv4 = nn.Conv2d(64, 128, kernel_size=5, stride=1, padding=2)
@@ -36,14 +36,14 @@ class DrawMLP(nn.Module):
         self.pool = nn.MaxPool2d(2, 2)
 
         # Compute flattened size dynamically
-        sample_input = torch.zeros(1, 2, image_width, image_height)
+        sample_input = torch.zeros(1, 6, image_width, image_height)
         with torch.no_grad():
             flattened_size = self._compute_feature_map_size(sample_input)
 
         # Fully connected layers
         self.fc1 = nn.Linear(flattened_size, hidden_size)
         self.fc2 = nn.Linear(hidden_size, 32)
-        self.fc3 = nn.Linear(32, num_points * 2 + 2)  # num_points * 2 + 2 (intensity & thickness)
+        self.fc3 = nn.Linear(32, num_points * 2 + 4)  # num_points * 2 + 2 (intensity & thickness)
 
     def _compute_feature_map_size(self, x):
         """Computes the feature map size after convolutions and pooling."""
@@ -75,10 +75,10 @@ class DrawMLP(nn.Module):
 
         # Split outputs properly
         control_points = x[:, :self.num_points * 2].view(batch_size, self.num_points, 2)
-        intensity = x[:, self.num_points * 2]
-        thickness = x[:, self.num_points * 2 + 1] * 3.0  # Scale thickness
+        color = x[:, self.num_points * 2:self.num_points * 2 + 3] + 0.1  # Avoid zero intensity
+        thickness = x[:, self.num_points * 2 + 3] * 3.0 + 0.5  # Scale thickness
 
-        return control_points, intensity, thickness
+        return control_points, color, thickness
 
 class MNISTDataset(Dataset):
     def __init__(self, dataset_split, image_width, image_height):
@@ -90,13 +90,32 @@ class MNISTDataset(Dataset):
             transforms.Resize((self.image_width, self.image_height)),  # Resize
             transforms.ToTensor()  # Convert to tensor, auto normalizes to [0,1]
         ])
+        self.epoch = 0
 
     def __len__(self):
         return len(self.data)
 
     def __getitem__(self, idx):
         img = self.data[idx]["image"]  # PIL image
-        return self.transform(img)
+        img = self.transform(img)
+
+        # Blend factor increases over time (clipped to 1.0 max)
+        blend_factor = min(self.epoch * 0.01, 1.0)
+
+        # Original grayscale expanded to RGB
+        grayscale_img = img.repeat(3, 1, 1)
+
+        # Random color tint (same as before)
+        rand_color = torch.rand(3) * 0.75 + 0.25
+        color_tinted_img = img * rand_color.view(3, 1, 1)
+
+        # Blend between grayscale and color-tinted versions
+        blended_img = (1 - blend_factor) * grayscale_img + blend_factor * color_tinted_img
+
+        # Invert the image
+        final_img = 1 - blended_img
+
+        return final_img
 
 class ImageDataset(Dataset):
     def __init__(self, dataset_path, image_width, image_height):
@@ -122,7 +141,7 @@ class ImageDataset(Dataset):
         img = transform(Image.open(image_path))
         return img
 
-def cubic_bezier(control_points, num_samples=400):
+def cubic_bezier(control_points, num_samples=100):
     """Computes a cubic Bézier curve for parameter t (batched)."""
     p0, p1, p2, p3 = control_points[:, 0], control_points[:, 1], control_points[:, 2], control_points[:, 3]
 
@@ -133,10 +152,7 @@ def cubic_bezier(control_points, num_samples=400):
 
     return ((1 - t) ** 3) * p0 + 3 * ((1 - t) ** 2) * t * p1 + 3 * (1 - t) * (t ** 2) * p2 + (t ** 3) * p3  # Shape: [batch, num_samples, 2]
 
-def smooth_tanh(x, alpha=2):
-    return 0.5 * (torch.tanh(alpha * x) + 1)
-
-def draw_bezier_curve(control_points, intensity, thickness, canvas, num_samples=400):
+def draw_bezier_curve(control_points, color, thickness, canvas, num_samples=100):
     """Draws a Bézier curve on a batch of canvases using a Gaussian function (fully vectorized)."""
     batch_size, _, height, width = canvas.shape
     device = canvas.device  # Ensure all tensors are on the same device
@@ -160,12 +176,16 @@ def draw_bezier_curve(control_points, intensity, thickness, canvas, num_samples=
     dist_sq = torch.sum((grid - curve_points) ** 2, dim=-1)  # Shape: [batch, num_samples, height, width]
 
     # 🔹 **Fix: Ensure Thickness & Intensity Have Correct Shapes**
-    thickness = (thickness.view(batch_size, 1, 1, 1) + 1e-4) # Shape: [batch, 1, 1, 1]
-    intensity = intensity.view(batch_size, 1, 1, 1) + 1e-4 # Shape: [batch, 1, 1, 1]
+    thickness = thickness.view(batch_size, 1, 1, 1) # Shape: [batch, 1, 1, 1]
+    color = color.view(batch_size, 3, 1, 1) # Shape: [batch, 3, 1, 1]
+
+    sharpness = 5
+    intensity_map = (1 - torch.tanh(sharpness * (torch.sqrt(dist_sq) - thickness)))
 
     # Compute Gaussian intensity and sum over sampled points
-    intensity_map = intensity * torch.exp(-dist_sq / (2 * thickness ** 2))  # Shape: [batch, num_samples, height, width]
-    intensity_map = intensity_map.sum(dim=1, keepdim=True)  # Reduce over sampled points → [batch, 1, height, width]
+    # intensity_map = intensity * torch.exp(-dist_sq / (2 * thickness ** 2))  # Shape: [batch, num_samples, height, width]
+
+    intensity_map = color * intensity_map.sum(dim=1, keepdim=True)  # Reduce over sampled points → [batch, 3, height, width]
 
     # Draw the curve on the canvas
     new_canvas = torch.nn.functional.softplus(canvas - intensity_map, beta=50)  # Ensures values remain positive
@@ -185,15 +205,13 @@ def save_results(canvas, example, prefix="output", folder="test_images"):
 
         torchvision.utils.save_image(combined, filename)
 
-
-
 # Load MNIST dataset from Hugging Face
 dataset = load_dataset("ylecun/mnist")
 
 # Use GPU if available
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-image_folder = "test_images_mnist"
+image_folder = "test_images_mnist_color"
 if not os.path.exists(image_folder):
     os.makedirs(image_folder, exist_ok=True)
 
@@ -201,8 +219,8 @@ if not os.path.exists(image_folder):
 num_points = 4
 # batch_size = 8
 # height, width = 128, 128  # Canvas size
-batch_size = 16
-height, width = 28, 28  # Canvas size
+batch_size = 192
+height, width = 64, 64  # Canvas size
 
 # Initialize the dataset and dataloader
 # dataset = ImageDataset(dataset_path=".//data//train_curve//", image_width=height, image_height=width)
@@ -217,7 +235,8 @@ optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
 num_curves = 5  # Number of curves to draw
 
 # Training loop
-for epoch in range(500):  # Just one epoch for testing
+for epoch in range(500):
+    dataset.epoch = epoch  # Update the dataset's epoch for blending
     for batch_idx, batch in enumerate(dataloader):
         # Move batch to the appropriate device
         example_batch = batch.to(device)
@@ -227,32 +246,30 @@ for epoch in range(500):  # Just one epoch for testing
         print(f"Batch size: {batch_size}, Height: {height}, Width: {width}")
 
         # Shape: [batch_size, 1, height, width]
-        canvas = torch.ones(batch_size, 1, height, width, device=device, requires_grad=True)
+        canvas = torch.ones(batch_size, 3, height, width, device=device, requires_grad=True)
 
         for i in range(num_curves):
 
             optimizer.zero_grad()  # Reset gradients
 
             # Control points in the range [0, 1]
-            example_batch_inverse = 1 - example_batch  # Inverse of the example batch
-            control_points, intensity, thickness = model(example_batch_inverse, canvas)  # Shape: [batch_size, num_points, 2]
+            control_points, color, thickness = model(example_batch, canvas)  # Shape: [batch_size, num_points, 2]
+
+            if epoch < 3:
+                color = torch.ones_like(color)
 
             # Draw the curves
-            new_canvas = draw_bezier_curve(control_points, intensity, thickness, canvas)
+            new_canvas = draw_bezier_curve(control_points, color, thickness, canvas)
 
             # Compute the mse loss between the new canvas and the example batch
-            loss = torch.nn.functional.mse_loss(new_canvas, example_batch_inverse)
+            loss = torch.nn.functional.mse_loss(new_canvas, example_batch)
+
             print(f"Epoch {epoch}, Batch {batch_idx}, Curve {i}, Loss: {loss.item()}")
 
             loss.backward()  # Retain graph for further backward passes
             optimizer.step()  # Update weights
 
             canvas = new_canvas.detach().clone()  # Detach the canvas to avoid tracking gradients
-
-            # print(control_points.grad)  # Should now be populated
-
-            # print(f"Canvas shape: {canvas.shape}")  # Expected: [4, 1, 64, 64]
-
 
     # Save the canvas to a file
     save_results(new_canvas, example_batch, prefix=f"mnist_{epoch}", folder=image_folder)

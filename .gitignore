@@ -4,3 +4,7 @@ test_images/
 test_images_curve/
 generated_images/
 test_images_simple/
+test_images_mnist/
+test_images_mnist_color/
+test_images_mnist_tanh/
+style_test_images/
