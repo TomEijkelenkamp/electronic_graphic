@@ -21,14 +21,14 @@ class DrawMLP(nn.Module):
         self.num_points = num_points  # Number of Bézier control points
 
         # Convolutional layers
-        self.conv1 = nn.Conv2d(6, 64, kernel_size=3, stride=1, padding=1)
-        self.conv2 = nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1)
-        self.conv3 = nn.Conv2d(128, 256, kernel_size=3, stride=1, padding=1)
+        self.conv1 = nn.Conv2d(6, 32, kernel_size=3, stride=1, padding=1)
+        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1)
+        self.conv3 = nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1)
 
         # Batch Normalization
-        self.bn1 = nn.BatchNorm2d(64)
-        self.bn2 = nn.BatchNorm2d(128)
-        self.bn3 = nn.BatchNorm2d(256)
+        self.bn1 = nn.BatchNorm2d(32)
+        self.bn2 = nn.BatchNorm2d(64)
+        self.bn3 = nn.BatchNorm2d(128)
 
         # Pooling
         self.pool = nn.MaxPool2d(2, 2)
@@ -39,8 +39,8 @@ class DrawMLP(nn.Module):
             flattened_size = self._compute_feature_map_size(sample_input)
 
         # Fully connected layers
-        self.fc1 = nn.Linear(flattened_size, 256)
-        self.fc2 = nn.Linear(256, 32)
+        self.fc1 = nn.Linear(flattened_size, 128)
+        self.fc2 = nn.Linear(128, 32)
         self.fc3 = nn.Linear(32, num_points * 2 + 4)  # num_points * 2 + 2 (intensity & thickness)
 
     def _compute_feature_map_size(self, x):
@@ -53,21 +53,43 @@ class DrawMLP(nn.Module):
     def forward(self, example_batch, drawing_batch):
         batch_size = example_batch.shape[0]
 
+        assert not torch.isnan(example_batch).any(), "NaN detected in example_batch!"
+        assert not torch.isnan(drawing_batch).any(), "NaN detected in drawing_batch!"
+
+
         # Concatenate example and drawing images along the channel dimension
         x = torch.cat((example_batch, drawing_batch), dim=1)
+        # print("Input mean and std before conv1:", x.mean(), x.std())
+
+        # print(f"Input shape: {x.shape}")
+        # print(x)
 
         # Apply convolutional layers with activation and pooling
         x = self.pool(F.silu(self.bn1(self.conv1(x))))
+        # print(f"After conv1: {x.shape}")
+        # print(x)
         x = self.pool(F.silu(self.bn2(self.conv2(x))))
+        # print(f"After conv2: {x.shape}")
+        # print(x)
         x = self.pool(F.silu(self.bn3(self.conv3(x))))
+        # print(f"After conv3: {x.shape}")
+        # print(x)
 
         # Flatten
         x = x.view(batch_size, -1)
+        # print(f"Flattened shape: {x.shape}")
+        # print(x)
 
         # Fully connected layers with activation
         x = F.silu(self.fc1(x))
+        # print(f"After fc1: {x.shape}")
+        # print(x)
         x = F.silu(self.fc2(x))
+        # print(f"After fc2: {x.shape}")
+        # print(x)
         x = torch.sigmoid(self.fc3(x))  # Normalize output to [0, 1]
+        # print(f"After fc3: {x.shape}")
+        # print(x)
 
         # Split outputs properly
         control_points = x[:, :self.num_points * 2].view(batch_size, self.num_points, 2)
@@ -249,12 +271,12 @@ def load_checkpoint(model, optimizer, filename="checkpoint.pth"):
 
 
 # Load MNIST dataset from Hugging Face
-dataset = load_dataset("ylecun/mnist")
+# dataset = load_dataset("ylecun/mnist")
 
 # Use GPU if available
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-image_folder = "char_dataset_results_3"
+image_folder = "results//char_dataset_results_3"
 if not os.path.exists(image_folder):
     os.makedirs(image_folder, exist_ok=True)
 
@@ -266,7 +288,7 @@ batch_size = 192
 height, width = 64, 64  # Canvas size
 
 # Initialize the dataset and dataloader
-dataset = ImageDataset(dataset_path=".//character_images//", image_width=height, image_height=width)
+dataset = ImageDataset(dataset_path=".//data//character_images//", image_width=height, image_height=width)
 # dataset = MNISTDataset(dataset_split="train", image_width=height, image_height=width)
 dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
@@ -279,7 +301,7 @@ optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
 
 num_curves = 5  # Number of curves to draw
 
-start_epoch = load_checkpoint(model, optimizer, filename="checkpoint.pth")
+start_epoch = load_checkpoint(model, optimizer, filename="models//checkpoint.pth")
 
 # Training loop
 for epoch in range(start_epoch, 500):
@@ -290,7 +312,7 @@ for epoch in range(start_epoch, 500):
         # print(control_points)
 
         batch_size, _, height, width = example_batch.shape
-        print(f"Batch size: {batch_size}, Height: {height}, Width: {width}")
+        # print(f"Batch size: {batch_size}, Height: {height}, Width: {width}")
 
         # Shape: [batch_size, 1, height, width]
         canvas = torch.ones(batch_size, 3, height, width, device=device, requires_grad=True)
@@ -302,23 +324,34 @@ for epoch in range(start_epoch, 500):
             # Control points in the range [0, 1]
             control_points, color, thickness = model(example_batch, canvas)  # Shape: [batch_size, num_points, 2]
 
+
+            # print(f"Control points shape: {control_points.shape}, Color shape: {color.shape}, Thickness shape: {thickness.shape}")
+            # print(control_points)
+            # print(color)
+            # print(thickness)
             # Draw the curves
             new_canvas = draw_bezier_curve(control_points, color, thickness, canvas)
 
             # Compute the mse loss between the new canvas and the example batch
+            # print(f"Canvas shape: {new_canvas.shape}, Example batch shape: {example_batch.shape}")
+            # print(new_canvas)
+            # print(example_batch)
             loss = torch.nn.functional.mse_loss(new_canvas, example_batch)
 
-            print(f"Epoch {epoch}, Batch {batch_idx}, Curve {i}, Loss: {loss.item()}")
+            # print(f"Epoch {epoch}, Batch {batch_idx}, Curve {i}, Loss: {loss.item()}")
 
             loss.backward()  # Retain graph for further backward passes
             optimizer.step()  # Update weights
 
             canvas = new_canvas.detach().clone()  # Detach the canvas to avoid tracking gradients
 
+        if batch_idx % 25 == 0:
+            print(f"Epoch {epoch}, Batch {batch_idx}, Loss: {loss.item()}")
+
     # Save the canvas to a file
     save_results(new_canvas, example_batch, prefix=f"mnist_{epoch}", folder=image_folder)
 
-    save_checkpoint(model, optimizer, epoch, filename="checkpoint.pth")
+    save_checkpoint(model, optimizer, epoch, filename="models//checkpoint.pth")
 
 
             
