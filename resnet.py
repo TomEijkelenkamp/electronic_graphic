@@ -32,21 +32,21 @@ class BasicBlock(nn.Module):
 class ResNet128(nn.Module):
     def __init__(self, num_classes=8 + 3 + 1 + 1):
         super().__init__()
-        self.in_channels = 32
+        self.in_channels = 16
 
-        self.conv1 = nn.Conv2d(6, 32, 3, stride=1, padding=1, bias=False)
-        self.bn1 = nn.BatchNorm2d(32)
+        self.conv1 = nn.Conv2d(6, 16, 3, stride=1, padding=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(16)
         self.act = nn.SiLU(inplace=True)
 
-        self.layer1 = self._make_layer(BasicBlock, 32, 5)
-        self.layer2 = self._make_layer(BasicBlock, 64, 5, stride=2)
-        self.layer3 = self._make_layer(BasicBlock, 128, 5, stride=2)
+        self.layer1 = self._make_layer(BasicBlock, 16, 3)
+        self.layer2 = self._make_layer(BasicBlock, 32, 3, stride=2)
+        self.layer3 = self._make_layer(BasicBlock, 64, 3, stride=2)
 
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         self.fc = nn.Sequential(
-            nn.Linear(128, 256),
+            nn.Linear(64, 128),
             nn.SiLU(),
-            nn.Linear(256, num_classes)
+            nn.Linear(128, num_classes)
         )
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

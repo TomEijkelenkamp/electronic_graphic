@@ -54,7 +54,7 @@ def train(model, dataloader_train, optimizer, scheduler, num_curves=8):
 
             canvas = new_canvas.detach().clone()  # Detach the canvas to avoid tracking gradients
             
-        if batch_idx % 50 == 0:
+        if batch_idx % 10 == 0:
             print(f"Batch {batch_idx}, Loss: {loss.item()}")
 
     scheduler.step()  # Update learning rate
