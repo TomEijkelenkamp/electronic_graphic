@@ -9,7 +9,7 @@ class BasicBlock(nn.Module):
         super().__init__()
         self.conv1 = nn.Conv2d(in_channels, out_channels, 3, stride, 1, bias=False)
         self.bn1 = nn.BatchNorm2d(out_channels)
-        self.relu = nn.ReLU(inplace=True)
+        self.act = nn.SiLU(inplace=True)
 
         self.conv2 = nn.Conv2d(out_channels, out_channels, 3, 1, 1, bias=False)
         self.bn2 = nn.BatchNorm2d(out_channels)
@@ -19,31 +19,35 @@ class BasicBlock(nn.Module):
     def forward(self, x):
         identity = x
 
-        out = self.relu(self.bn1(self.conv1(x)))
+        out = self.act(self.bn1(self.conv1(x)))
         out = self.bn2(self.conv2(out))
 
         if self.downsample:
             identity = self.downsample(x)
 
         out += identity
-        out = self.relu(out)
+        out = self.act(out)
         return out
 
-class ResNet32(nn.Module):
-    def __init__(self, num_classes=8+3+1+1):
+class ResNet128(nn.Module):
+    def __init__(self, num_classes=8 + 3 + 1 + 1):
         super().__init__()
-        self.in_channels = 16
+        self.in_channels = 32
 
-        self.conv1 = nn.Conv2d(6, 16, 3, stride=1, padding=1, bias=False)
-        self.bn1 = nn.BatchNorm2d(16)
-        self.relu = nn.ReLU(inplace=True)
+        self.conv1 = nn.Conv2d(6, 32, 3, stride=1, padding=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(32)
+        self.act = nn.SiLU(inplace=True)
 
-        self.layer1 = self._make_layer(BasicBlock, 16, 5)
-        self.layer2 = self._make_layer(BasicBlock, 32, 5, stride=2)
-        self.layer3 = self._make_layer(BasicBlock, 64, 5, stride=2)
+        self.layer1 = self._make_layer(BasicBlock, 32, 5)
+        self.layer2 = self._make_layer(BasicBlock, 64, 5, stride=2)
+        self.layer3 = self._make_layer(BasicBlock, 128, 5, stride=2)
 
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-        self.fc = nn.Linear(64, num_classes)
+        self.fc = nn.Sequential(
+            nn.Linear(128, 256),
+            nn.SiLU(),
+            nn.Linear(256, num_classes)
+        )
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.to(self.device)
@@ -67,48 +71,53 @@ class ResNet32(nn.Module):
     def forward(self, example_batch, drawing_batch):
         batch_size = example_batch.shape[0]
 
-        # Concatenate example and drawing images along the channel dimension
-        x = torch.cat((example_batch, drawing_batch), dim=1)
+        x = torch.cat((example_batch, drawing_batch), dim=1)  # [B, 6, 64, 64]
+        x = self.act(self.bn1(self.conv1(x)))                 # [B, 32, 64, 64]
+        x = self.layer1(x)                                    # [B, 32, 64, 64]
+        x = self.layer2(x)                                    # [B, 64, 32, 32]
+        x = self.layer3(x)                                    # [B, 128, 16, 16]
+        x = self.avgpool(x)                                   # [B, 128, 1, 1]
+        x = torch.flatten(x, 1)                               # [B, 128]
+        x = self.fc(x)                                        # [B, num_classes]
+        x = torch.sigmoid(x)
 
-        x = self.relu(self.bn1(self.conv1(x)))   # [B, 16, 64, 64]
-        x = self.layer1(x)                       # [B, 16, 64, 64]
-        x = self.layer2(x)                       # [B, 32, 32, 32]
-        x = self.layer3(x)                       # [B, 64, 16, 16]
-        x = self.avgpool(x)                      # [B, 64, 1, 1]
-        x = torch.flatten(x, 1)
-        x = self.fc(x)
-
-        x = torch.sigmoid(x)  # Normalize output to [0, 1]
-        
-        # Split outputs properly
         control_points = x[:, :8].view(batch_size, 4, 2)
         color = x[:, 8:8 + 3]
-        thickness = x[:, 8 + 3] * 10.0 + 0.5  # Scale thickness
-        sharpness = x[:, 8 + 4] * 10.0 + 0.5  # Scale sharpness
+        thickness = x[:, 8 + 3] * 10.0 + 0.5
+        sharpness = x[:, 8 + 4] * 10.0 + 0.5
 
         return control_points, color, thickness, sharpness
-    
-    def save_checkpoint(self, optimizer, scheduler, epoch, model_path="checkpoint.pth"):
-        # Ensure the directory exists
-        os.makedirs(os.path.dirname(model_path), exist_ok=True)
 
+    def check_for_invalid_params(model):
+        for name, param in model.named_parameters():
+            if param.requires_grad:
+                if torch.isnan(param).any():
+                    print(f"NaN detected in parameter: {name}")
+                    return True
+                if torch.isinf(param).any():
+                    print(f"Inf detected in parameter: {name}")
+                    return True
+        print("✅ All model parameters are valid (no NaN or Inf).")
+        return False
+
+    def save_checkpoint(self, optimizer, scheduler, epoch, model_path="checkpoint.pth"):
+        os.makedirs(os.path.dirname(model_path), exist_ok=True)
         checkpoint = {
             'epoch': epoch,
             'model_state_dict': self.state_dict(),
             'optimizer_state_dict': optimizer.state_dict(),
             'scheduler_state_dict': scheduler.state_dict(),
         }
-
         torch.save(checkpoint, model_path)
         print(f"Checkpoint saved at '{model_path}'")
-        
+
     def load_checkpoint(self, optimizer, scheduler, filename="checkpoint.pth"):
         if os.path.isfile(filename):
             print(f"Loading checkpoint '{filename}'")
             checkpoint = torch.load(filename)
             self.load_state_dict(checkpoint['model_state_dict'])
             optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-            scheduler.load_state_dict(checkpoint['scheduler_state_dict'])  # 👈 new
+            scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
             start_epoch = checkpoint['epoch'] + 1
             print(f"Loaded checkpoint from epoch {checkpoint['epoch']}")
             return start_epoch

@@ -10,6 +10,11 @@ def run(model, dataloader_train, dataloader_validate, optimizer, scheduler, num_
         print(f"Epoch {epoch}/{num_epochs}, Learning Rate: {scheduler.get_last_lr()}")
         
         train(model, dataloader_train, optimizer, scheduler, num_curves=num_curves)
+
+        if model.check_for_invalid_params():
+            print("Invalid parameters detected. Stopping training.")
+            break
+
         model.save_checkpoint(optimizer, scheduler, epoch, model_path=model_path)  # Save model checkpoint
 
         validate(model, dataloader_validate, num_curves=num_curves, image_folder=image_folder)
@@ -84,10 +89,12 @@ def validate(model, dataloader, num_curves=8, image_folder=os.path.join("results
                 # Detach the canvas to avoid tracking gradients
                 canvas = new_canvas.detach().clone()
 
-                fullsize_canvas = draw_bezier_curve(control_points, color, thickness*8.0, sharpness, fullsize_canvas)
+                fullsize_canvas = draw_bezier_curve(control_points, color, thickness*8.0, sharpness*8.0, fullsize_canvas)
 
             # Save the canvas to a file
             save_results(canvas, example_batch, fullsize_canvas, prefix=f"valid_{batch_idx}", image_folder=image_folder)
+
+        print(f"Validation completed. Results saved to '{image_folder}'")
 
 def save_results(canvas, example, fullsize_canvas, prefix="output", image_folder=os.path.join("results", "images")):
     """Saves each canvas in the batch as a separate PNG image."""

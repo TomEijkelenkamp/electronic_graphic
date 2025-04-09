@@ -7,7 +7,7 @@ from dataset import HuggingfaceDataset
 from torch.optim.lr_scheduler import StepLR
 import torch
 
-name = "bezier_imagenet_resnet_v1"
+name = "bezier_imagenet_resnet_v2"
 image_folder = os.path.join("results", name)
 model_path = os.path.join("models", f"{name}.pth")
 
@@ -17,6 +17,8 @@ dataset = load_dataset("zh-plus/tiny-imagenet")
 
 batch_size = 192
 height, width = 64, 64  # Canvas size
+
+number_of_curves = 8  # Number of curves to draw
 
 # Initialize the dataset and dataloader
 # dataset = ImageDataset(dataset_path=".//data//character_images//", image_width=height, image_height=width)
@@ -34,4 +36,4 @@ scheduler = StepLR(optimizer, step_size=20, gamma=0.5)
 start_epoch = model.load_checkpoint(optimizer, scheduler, filename=model_path)
 
 # Train the model
-run(model, train_loader, val_loader, optimizer, scheduler, num_epochs=500, start_epoch=start_epoch, num_curves=8, model_path=model_path, image_folder=image_folder)
+run(model, train_loader, val_loader, optimizer, scheduler, num_epochs=500, start_epoch=start_epoch, num_curves=number_of_curves, model_path=model_path, image_folder=image_folder)
