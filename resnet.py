@@ -49,6 +49,9 @@ class ResNet128(nn.Module):
             nn.Linear(128, num_classes)
         )
 
+        # Apply Xavier initialization to the entire model
+        self.apply(self.init_weights)
+
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.to(self.device)
 
@@ -83,10 +86,16 @@ class ResNet128(nn.Module):
 
         control_points = x[:, :8].view(batch_size, 4, 2)
         color = x[:, 8:8 + 3]
-        thickness = x[:, 8 + 3] * 10.0 + 0.5
-        sharpness = x[:, 8 + 4] * 10.0 + 0.5
+        thickness = x[:, 8 + 3] * 100.0 + 0.5
+        sharpness = x[:, 8 + 4] * 100.0 + 0.5
 
         return control_points, color, thickness, sharpness
+
+    def init_weights(self, m):
+        if isinstance(m, (torch.nn.Conv2d, torch.nn.Linear)):
+            torch.nn.init.xavier_normal_(m.weight)
+            if m.bias is not None:
+                torch.nn.init.zeros_(m.bias)
 
     def check_for_invalid_params(model):
         for name, param in model.named_parameters():
@@ -118,8 +127,9 @@ class ResNet128(nn.Module):
             self.load_state_dict(checkpoint['model_state_dict'])
             optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
             scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
-            start_epoch = checkpoint['epoch'] + 1
-            print(f"Loaded checkpoint from epoch {checkpoint['epoch']}")
+            start_epoch = checkpoint['epoch']
+            print(f"Loaded checkpoint from epoch {checkpoint['epoch']}, learning rate: {scheduler.get_last_lr()}")
+            self.check_for_invalid_params()
             return start_epoch
         else:
             print("No checkpoint found. Starting from scratch.")

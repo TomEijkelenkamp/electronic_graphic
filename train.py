@@ -2,14 +2,15 @@ import torch
 import torchvision.utils
 import os
 from bezier import draw_bezier_curve
+from datetime import datetime
 
 
-def run(model, dataloader_train, dataloader_validate, optimizer, scheduler, num_epochs=500, start_epoch=0, num_curves=8, model_path=os.path.join("models", "checkpoint.pth"), image_folder=os.path.join("results", "images")):
+def run(model, dataloader_train, dataloader_validate, optimizer, scheduler, num_epochs=500, start_epoch=0, num_curves=8, save_and_evaluate_every=500, model_path=os.path.join("models", "checkpoint.pth"), image_folder=os.path.join("results", "images")):
     """Runs the training and validation loop."""
     for epoch in range(start_epoch, num_epochs):
         print(f"Epoch {epoch}/{num_epochs}, Learning Rate: {scheduler.get_last_lr()}")
         
-        train(model, dataloader_train, optimizer, scheduler, num_curves=num_curves)
+        train(model, dataloader_train, dataloader_validate, optimizer, scheduler, num_curves=num_curves, epoch=epoch, save_and_evaluate_every=save_and_evaluate_every, model_path=model_path, image_folder=image_folder)  # Train the model
 
         if model.check_for_invalid_params():
             print("Invalid parameters detected. Stopping training.")
@@ -21,11 +22,13 @@ def run(model, dataloader_train, dataloader_validate, optimizer, scheduler, num_
 
 
 
-def train(model, dataloader_train, optimizer, scheduler, num_curves=8):
+def train(model, dataloader_train, dataloader_validate, optimizer, scheduler, num_curves=8, epoch=0, save_and_evaluate_every=500, model_path=os.path.join("models", "checkpoint.pth"), image_folder=os.path.join("results", "images")):
     """Trains the model on a given dataset."""
     device = model.device  # Get the device from the model
 
     print("Training...")
+
+    start_time = datetime.now()
 
     for batch_idx, batch in enumerate(dataloader_train):
         # Move batch to the appropriate device
@@ -54,8 +57,19 @@ def train(model, dataloader_train, optimizer, scheduler, num_curves=8):
 
             canvas = new_canvas.detach().clone()  # Detach the canvas to avoid tracking gradients
             
-        if batch_idx % 10 == 0:
-            print(f"Batch {batch_idx}, Loss: {loss.item()}")
+        if batch_idx % 50 == 0 and batch_idx > 0:  # Print every 50 batches
+            print(f"Batch {batch_idx}, Loss: {loss.item()}, Time: {datetime.now() - start_time}")
+            start_time = datetime.now()  # Reset start time for next batch
+            if model.check_for_invalid_params():
+                break
+
+        if batch_idx % save_and_evaluate_every == 0 and batch_idx > 0:  # Limit the number of batches for training
+            if model.check_for_invalid_params():
+                break
+
+            model.save_checkpoint(optimizer, scheduler, epoch, model_path=model_path)  # Save model checkpoint
+
+            validate(model, dataloader_validate, num_curves=num_curves, image_folder=image_folder)
 
     scheduler.step()  # Update learning rate
 
