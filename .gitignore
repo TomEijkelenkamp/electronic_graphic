@@ -1,5 +1,8 @@
 design/
 data/
-results/
+results/char*
+results/test*
+results/bezier_imagenet_resnet_v*
+results/bezier_imagenet_resnet_128/*
 design/mindspace.txt
 /__pycache__
