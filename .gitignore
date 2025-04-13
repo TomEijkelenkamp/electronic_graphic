@@ -1,7 +1,13 @@
 design/
 data/
-results/char*
-results/test*
+results/char_dataset_results
+results/char_dataset_results_3
+results/char_dataset_results_4
+results/char_dataset_results_5
+results/test_images
+results/test_images_curve
+results/test_images_simple
+results/test_images_mnist_*
 results/bezier_imagenet_resnet_v*
 results/bezier_imagenet_resnet_128/*
 design/mindspace.txt
