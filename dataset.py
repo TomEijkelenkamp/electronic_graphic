@@ -44,10 +44,23 @@ class HuggingfaceDataset(Dataset):
     def __len__(self):
         return len(self.data)
 
+    def disk_kernel(self, radius):
+        """Create a disk-shaped binary kernel for morphological ops."""
+        diameter = 2 * radius + 1
+        y, x = torch.meshgrid(
+            torch.arange(diameter, device=self.device),
+            torch.arange(diameter, device=self.device),
+            indexing="ij"  # for PyTorch 1.10+
+        )
+        center = radius
+        dist = ((x - center)**2 + (y - center)**2).sqrt()
+        kernel = (dist <= radius).float()  # 1.0 inside the disk, 0.0 outside
+        return kernel
+
     def dilate(self, img):
-        kernel_size = 25 - self.epoch * 5  # Decrease kernel size over time
-        if kernel_size > 0:
-            kernel = torch.ones((kernel_size, kernel_size), device=self.device)
+        kernel_radius = 12 - self.epoch * 2  # Decrease kernel size over time
+        if kernel_radius > 0:
+            kernel = self.disk_kernel(kernel_radius)
             img = img.unsqueeze(0).to(self.device)
             img = km.dilation(img, kernel)
             img = img.squeeze(0)  # (C, H, W)
