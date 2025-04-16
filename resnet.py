@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import os
+from tqdm import tqdm
 
 class BasicBlock(nn.Module):
     expansion = 1
@@ -31,6 +32,7 @@ class BasicBlock(nn.Module):
 
 class ResNet128(nn.Module):
     def __init__(self, num_classes=8 + 3 + 1 + 1):
+        print("Initialize model...")
         super().__init__()
         self.in_channels = 16
 
@@ -82,12 +84,11 @@ class ResNet128(nn.Module):
         x = self.avgpool(x)                                   # [B, 128, 1, 1]
         x = torch.flatten(x, 1)                               # [B, 128]
         x = self.fc(x)                                        # [B, num_classes]
-        x = torch.sigmoid(x)
 
         control_points = x[:, :8].view(batch_size, 4, 2)
-        color = x[:, 8:8 + 3]
-        thickness = x[:, 8 + 3] * 100.0 + 0.5
-        sharpness = x[:, 8 + 4] * 100.0 + 0.5
+        color = torch.sigmoid(x[:, 8:8 + 3])
+        thickness = torch.nn.functional.softplus(x[:, 11:12], beta=50)  # [B, 1]
+        sharpness = torch.nn.functional.softplus(x[:, 12:13], beta=50)  # [B, 1]         
 
         return control_points, color, thickness, sharpness
 
@@ -101,15 +102,14 @@ class ResNet128(nn.Module):
         for name, param in model.named_parameters():
             if param.requires_grad:
                 if torch.isnan(param).any():
-                    print(f"NaN detected in parameter: {name}")
+                    tqdm.write(f"NaN detected in parameter: {name}")
                     return True
                 if torch.isinf(param).any():
-                    print(f"Inf detected in parameter: {name}")
+                    tqdm.write(f"Inf detected in parameter: {name}")
                     return True
-        print("✅ All model parameters are valid (no NaN or Inf).")
         return False
 
-    def save_checkpoint(self, optimizer, scheduler, epoch, model_path="checkpoint.pth"):
+    def save_checkpoint(self, optimizer, scheduler, epoch, avg_loss, model_path="checkpoint.pth"):
         os.makedirs(os.path.dirname(model_path), exist_ok=True)
         checkpoint = {
             'epoch': epoch,
@@ -118,7 +118,7 @@ class ResNet128(nn.Module):
             'scheduler_state_dict': scheduler.state_dict(),
         }
         torch.save(checkpoint, model_path)
-        print(f"Checkpoint saved at '{model_path}'")
+        tqdm.write(f"✅ Checkpoint at epoch {epoch} with average loss {avg_loss:.4f} saved at '{model_path}'")
 
     def load_checkpoint(self, optimizer, scheduler, filename="checkpoint.pth"):
         if os.path.isfile(filename):
