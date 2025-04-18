@@ -11,4 +11,5 @@ results/test_images_mnist_*
 results/bezier_imagenet_resnet_v*
 results/bezier_imagenet_resnet_128/*
 design/mindspace.txt
-/__pycache__
+__pycache__
+.venv311

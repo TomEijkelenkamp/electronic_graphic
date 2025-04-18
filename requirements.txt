@@ -1,0 +1,7 @@
+tensorflow
+torch
+torchvision
+tqdm
+datasets
+kornia
+tensorflow-datasets

@@ -4,11 +4,32 @@ import os
 from bezier import draw_bezier_curve
 from tqdm import tqdm
 from collections import deque
-from dataset import get_train_dataset_loader, get_val_dataset_loader
+from dataset import MyDataset
 
-def train(model, dataset, image_width, image_height, batch_size_train, batch_size_val, num_val_images, optimizer, scheduler, num_epochs=500, start_epoch=0, num_curves=8, save_and_evaluate_every=500, model_path=os.path.join("models", "checkpoint.pth"), image_folder=os.path.join("results", "images")):
+def train(
+        model, 
+        dataset, 
+        dataset_type, 
+        image_width, 
+        image_height,
+        batch_size_train, 
+        batch_size_val, 
+        num_val_images, 
+        optimizer, 
+        scheduler, 
+        num_epochs=500, 
+        start_epoch=0, 
+        num_curves=8, 
+        save_and_evaluate_every=500, 
+        model_path=os.path.join("models", "checkpoint.pth"), 
+        image_folder=os.path.join("results", "images"),
+        dilate=False,
+        colorize=False,
+        invert=False,
+        flip=False,
+        ):
     """Runs the training and validation loop."""
-    train_loader = get_train_dataset_loader(dataset, image_width=image_width, image_height=image_height, batch_size=batch_size_train)
+    train_loader = MyDataset.get_dataset_loader(dataset, dataset_type, split="train", image_width=image_width, image_height=image_height, batch_size=batch_size_train, dilate=dilate, colorize=colorize, invert=invert, flip=flip)
 
     device = model.device  # Get the device from the model
 
@@ -61,14 +82,14 @@ def train(model, dataset, image_width, image_height, batch_size_train, batch_siz
 
                 if should_save:
                     model.save_checkpoint(optimizer, scheduler, epoch, avg_loss, model_path=model_path)
-                    validate(model, dataset, image_width, image_height, batch_size_val, num_val_images, num_curves=num_curves, image_folder=image_folder)
+                    validate(model, dataset, dataset_type, image_width, image_height, batch_size_val, num_val_images, num_curves=num_curves, image_folder=image_folder, dilate=dilate, colorize=colorize, invert=invert, flip=flip)
           
         scheduler.step()  # Update learning rate
 
-def validate(model, dataset, image_width, image_height, batch_size_val, num_val_images, num_curves=8, image_folder=os.path.join("results", "images")):
+def validate(model, dataset, dataset_type, image_width, image_height, batch_size_val, num_val_images, num_curves=8, image_folder=os.path.join("results", "images"), dilate=False, colorize=False, invert=False, flip=False):
     """Validates the model on a given dataset."""
 
-    val_loader = get_val_dataset_loader(dataset, num_images=num_val_images, image_width=image_width, image_height=image_height, batch_size=batch_size_val)
+    val_loader = MyDataset.get_dataset_loader(dataset, dataset_type, split="val", image_width=image_width, image_height=image_height, batch_size=batch_size_val, num_images=num_val_images, dilate=dilate, colorize=colorize, invert=invert, flip=flip)
 
     device = model.device  # Get the device from the model
 
