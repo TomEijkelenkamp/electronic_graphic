@@ -46,12 +46,20 @@
   <img src="results/char_dataset_results_2/mnist_123_93.png" style="margin:10px;">
   <img src="results/char_dataset_results_2/mnist_120_73.png" style="margin:10px;">
   <img src="results/char_dataset_results_2/mnist_121_21.png" style="margin:10px;">
-  <img src="results/char_dataset_results_2/mnist_122_64.png" style="margin:10px;">
+  <img src="results/char_dataset_results_2/mnist_121_8.png" style="margin:10px;">
   <img src="results/char_dataset_results_2/mnist_123_49.png" style="margin:10px;">
   <img src="results/char_dataset_results_2/mnist_116_110.png" style="margin:10px;">
   <img src="results/char_dataset_results_2/mnist_122_3.png" style="margin:10px;">
   <img src="results/char_dataset_results_2/mnist_122_68.png" style="margin:10px;">
   <img src="results/char_dataset_results_2/mnist_123_85.png" style="margin:10px;">
   <img src="results/char_dataset_results_2/mnist_123_94.png" style="margin:10px;">
+</p>
+
+<p align="center">
+  <img src="results/char_dataset_results_2/mnist_123_78.png" style="margin:10px;">
+  <img src="results/char_dataset_results_2/mnist_119_104.png" style="margin:10px;">
+  <img src="results/char_dataset_results_2/mnist_120_22.png" style="margin:10px;">
+  <img src="results/char_dataset_results_2/mnist_115_46.png" style="margin:10px;">
+  <img src="results/char_dataset_results_2/mnist_114_24.png" style="margin:10px;">
 </p>
 
