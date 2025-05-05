@@ -67,6 +67,6 @@
 <p align="center">
   <img src="results/bezier_imagenet_resnet_128_thickness_sharpness/bird.png" style="margin:10px;">
   <img src="results/bezier_imagenet_resnet_128_thickness_sharpness/bob.png" style="margin:10px;">
-  <img src="results/bezier_imagenet_resnet_128_thickness_sharpness/bok.png" style="margin:10px;">
   <img src="results/bezier_imagenet_resnet_128_thickness_sharpness/dog.png" style="margin:10px;">
+  <img src="results/bezier_imagenet_resnet_128_thickness_sharpness/bok.png" style="margin:10px;">
 </p>
