@@ -33,9 +33,9 @@
   <img src="results/char_dataset_results_2/mnist_122_58.png" style="margin:10px;">
   <img src="results/char_dataset_results_2/mnist_121_92.png" style="margin:10px;">
   <img src="results/char_dataset_results_2/mnist_121_58.png" style="margin:10px;">
-  <img src="results/test_images_mnist/mnist_119_94.png" style="margin:10px;">
-  <img src="results/test_images_mnist/mnist_121_41.png" style="margin:10px;">
-  <img src="results/test_images_mnist/mnist_121_41.png" style="margin:10px;">
-  <img src="results/test_images_mnist/mnist_121_41.png" style="margin:10px;">
+  <img src="results/char_dataset_results_2/mnist_119_94.png" style="margin:10px;">
+  <img src="results/char_dataset_results_2/mnist_121_41.png" style="margin:10px;">
+  <img src="results/char_dataset_results_2/mnist_121_41.png" style="margin:10px;">
+  <img src="results/char_dataset_results_2/mnist_121_41.png" style="margin:10px;">
 </p>
 
