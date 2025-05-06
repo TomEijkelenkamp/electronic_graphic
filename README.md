@@ -1,3 +1,11 @@
+# Artificial Illustrator
+This machine learning system can practice to draw a copy of an example picture in it's own style. It can draw a number of Bezier curves in a chosen color, thickness and sharpness. It can sketch the line by predicting four control points, which determine the motion of the cubic Bezier curve. 
+
+The input to the model is this example picture as well as what it has drawn so far. From these inputs it predicts how to draw one line, which will make its drawing a closer copy of the example picture. It does this iteratively for a preset number of curves. 
+
+The system learns on batches of example pictures. The curves are drawn using a soft rendering method to make the whole pipeline differentiable. 
+
+
 ### Results on MNIST:
 <p align="center">
   <img src="results/test_images_mnist/mnist_19_44.png" style="margin:10px;">
